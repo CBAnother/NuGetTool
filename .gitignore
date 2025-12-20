@@ -1,3 +1,17 @@
+
+.vs/
+build
+bin/
+obj/
+Release/
+Debug/
+x64/
+x86/
+*.user
+*.log
+
+
+
 # Prerequisites
 *.d
 
@@ -39,3 +53,4 @@
 
 # debug information files
 *.dwo
+

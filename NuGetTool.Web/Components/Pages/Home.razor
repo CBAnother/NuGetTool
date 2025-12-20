@@ -1,0 +1,223 @@
+﻿@page "/"
+@implements IDisposable
+@using NuGetTool.Core
+@using System.IO
+@using System.Linq
+@inject PackageService PackageService
+@inject IJSRuntime JS
+@rendermode InteractiveServer
+
+<PageTitle>NuGet Tool - Dashboard</PageTitle>
+
+<div class="container-fluid mt-4">
+    <div class="row">
+        <div class="col-lg-5">
+            <div class="premium-card">
+                <h2 class="mb-4"><i class="bi bi-box-seam me-2"></i>Package Configuration</h2>
+                
+                <div class="form-group">
+                    <label>Package ID</label>
+                    <input type="text" @bind="Metadata.Id" class="form-control-premium" placeholder="e.g. MyAwesomePackage" />
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>Version</label>
+                            <input type="text" @bind="Metadata.Version" class="form-control-premium" placeholder="1.0.0" />
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>Authors</label>
+                            <input type="text" @bind="Metadata.Authors" class="form-control-premium" placeholder="Author Name" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Description</label>
+                    <textarea @bind="Metadata.Description" class="form-control-premium" rows="2" placeholder="Describe your package..."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label>Content Files (one per line)</label>
+                    <textarea @bind="ContentFilesRaw" class="form-control-premium" rows="4" placeholder="C:\path\to\file.dll"></textarea>
+                </div>
+
+                <hr class="my-4 border-secondary" />
+
+                <div class="form-group">
+                    <label>NuGet Source URL</label>
+                    <input type="text" @bind="SourceUrl" class="form-control-premium" placeholder="https://api.nuget.org/v3/index.json" />
+                </div>
+
+                <div class="form-group">
+                    <label>Target Type</label>
+                    <div class="d-flex gap-3 mt-2">
+                        <label class="d-flex align-items-center gap-2" style="cursor:pointer">
+                            <input type="radio" name="targetType" checked="@(!IsNuspec)" @onclick="() => IsNuspec = false" /> .csproj
+                        </label>
+                        <label class="d-flex align-items-center gap-2" style="cursor:pointer">
+                            <input type="radio" name="targetType" checked="@IsNuspec" @onclick="() => IsNuspec = true" /> .nuspec
+                        </label>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2 mt-4">
+                    <button class="btn btn-primary-premium" @onclick="GenerateProject" disabled="@IsProcessing">
+                        @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-2"></span> }
+                        Generate & Build Package
+                    </button>
+                    <button class="btn btn-primary-premium" style="background: linear-gradient(135deg, #10b981, #059669)" @onclick="UploadPackage" disabled="@IsProcessing">
+                        @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-2"></span> }
+                        Upload to NuGet
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-7">
+            <div class="premium-card h-100 d-flex flex-column">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h2 class="mb-0"><i class="bi bi-terminal me-2"></i>Process Logs</h2>
+                    <button class="btn btn-sm btn-outline-light" @onclick="ClearLogs">Clear</button>
+                </div>
+                
+                <div class="terminal-log flex-grow-1" id="terminal-container">
+                    @foreach (var log in Logs)
+                    {
+                        <div class="terminal-line">@log</div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private PackageMetadata Metadata = new();
+    private string ContentFilesRaw = string.Empty;
+    private string SourceUrl = "https://api.nuget.org/v3/index.json";
+    private bool IsNuspec = false;
+    private bool IsProcessing = false;
+    private List<string> Logs = new();
+
+    protected override void OnInitialized()
+    {
+        PackageService.OnLog += HandleLog;
+    }
+
+    private void HandleLog(string message)
+    {
+        InvokeAsync(() =>
+        {
+            Logs.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
+            StateHasChanged();
+            ScrollToBottom();
+        });
+    }
+
+    private async void ScrollToBottom()
+    {
+        try 
+        {
+            await JS.InvokeVoidAsync("eval", "var el = document.getElementById('terminal-container'); if(el) el.scrollTop = el.scrollHeight;");
+        }
+        catch { }
+    }
+
+    private void ClearLogs() => Logs.Clear();
+
+    private async Task GenerateProject()
+    {
+        if (string.IsNullOrWhiteSpace(Metadata.Id))
+        {
+            Logs.Add("Error: Package ID is required.");
+            return;
+        }
+
+        IsProcessing = true;
+        try
+        {
+            UpdateMetadata();
+            string tempDir = Path.Combine(Path.GetTempPath(), "NuGetTool", Metadata.Id);
+            Directory.CreateDirectory(tempDir);
+
+            string projectPath;
+            if (IsNuspec)
+            {
+                projectPath = Path.Combine(tempDir, $"{Metadata.Id}.nuspec");
+                PackageService.GenerateNuspec(Metadata, projectPath);
+            }
+            else
+            {
+                projectPath = Path.Combine(tempDir, $"{Metadata.Id}.csproj");
+                PackageService.GenerateCsproj(Metadata, projectPath);
+            }
+
+            Logs.Add($"Project generated at: {projectPath}");
+            
+            await Task.Run(() => PackageService.BuildPackage(projectPath, IsNuspec));
+            Logs.Add("Build process completed.");
+        }
+        catch (Exception ex)
+        {
+            Logs.Add($"Error during generation/build: {ex.Message}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private async Task UploadPackage()
+    {
+        if (string.IsNullOrWhiteSpace(Metadata.Id))
+        {
+            Logs.Add("Error: Package ID is required to locate the package.");
+            return;
+        }
+
+        IsProcessing = true;
+        try
+        {
+            string tempDir = Path.Combine(Path.GetTempPath(), "NuGetTool", Metadata.Id);
+            // Locate the .nupkg file
+            var nupkgFiles = Directory.GetFiles(tempDir, "*.nupkg", SearchOption.AllDirectories);
+            
+            if (nupkgFiles.Length == 0)
+            {
+                Logs.Add("No .nupkg file found. Please build the package first.");
+                return;
+            }
+
+            string packagePath = nupkgFiles[0];
+            Logs.Add($"Uploading package: {packagePath} to {SourceUrl}");
+
+            await Task.Run(() => PackageService.UploadPackage(packagePath, IsNuspec, SourceUrl));
+            Logs.Add("Upload process completed.");
+        }
+        catch (Exception ex)
+        {
+            Logs.Add($"Error during upload: {ex.Message}");
+        }
+        finally
+        {
+            IsProcessing = false;
+        }
+    }
+
+    private void UpdateMetadata()
+    {
+        Metadata.ContentFiles = ContentFilesRaw
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .ToList();
+    }
+
+    public void Dispose()
+    {
+        PackageService.OnLog -= HandleLog;
+    }
+}
