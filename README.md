@@ -3,7 +3,7 @@
 The NuGetTool is a WPF application designed to simplify the creation and publishing of NuGet packages.
 
 ## How to Run
-1. Navigate to the project directory: `c:\dev\packages\nuget`
+1. Navigate to the project directory: `NuGetTool`
 2. Build the Solution:
    ```powershell
    dotnet build

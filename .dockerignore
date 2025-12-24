@@ -1,0 +1,13 @@
+**/.git
+**/.vs
+**/bin
+**/obj
+**/.vscode
+.dockerignore
+Dockerfile
+NuGetTool.sln
+README.md
+LICENSE
+docs/
+NuGetTool/
+build_output.txt
