@@ -7,9 +7,17 @@ This file contains instructions on how to build and run the `NuGetTool.Web` appl
 - Docker installed on your machine.
 - The repository content (including `NuGetTool.Web`, `NuGetTool.Core`, and the `Dockerfile`).
 
-## Build the Image
+## Option 1: Pull from Registry (Recommended)
 
-Open a terminal at the solution root and run the following command to build the Docker image:
+If you are on another PC, you don't need the source code. Just pull the latest image from the GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/displayname2023/nugettool/nugettool-web:latest
+```
+
+## Option 2: Build Locally
+
+If you have the source code, open a terminal at the solution root and run:
 
 ```bash
 docker build -t nugettool-web .
@@ -17,11 +25,13 @@ docker build -t nugettool-web .
 
 ## Run the Container
 
-Once the image is built, you can run it as a container:
+Once you have the image (either by pulling or building), run it:
 
 ```bash
-docker run -d -p 8080:8080 --name nugettool nugettool-web
+docker run -d -p 8080:8080 --name nugettool ghcr.io/displayname2023/nugettool/nugettool-web:latest
 ```
+
+*(Note: If you built it locally and tagged it as `nugettool-web`, use that name instead of the ghcr.io path in the run command.)*
 
 ## Access the Application
 

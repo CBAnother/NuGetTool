@@ -14,6 +14,10 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write
+
     steps:
     - uses: actions/checkout@v4
     - name: Setup .NET
@@ -24,5 +28,28 @@ jobs:
       run: dotnet restore NuGetTool.Web/NuGetTool.Web.csproj
     - name: Build
       run: dotnet build NuGetTool.Web/NuGetTool.Web.csproj --no-restore --configuration Release
-    - name: Build Docker image
-      run: docker build -t nugettool-web:latest .
+
+    - name: Log in to the Container registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata (tags, labels) for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}/nugettool-web
+        tags: |
+          type=ref,event=branch
+          type=sha,format=short
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}

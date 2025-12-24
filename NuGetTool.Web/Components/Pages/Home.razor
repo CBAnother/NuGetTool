@@ -116,6 +116,23 @@
         PackageService.OnLog += HandleLog;
     }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                var savedUrl = await JS.InvokeAsync<string>("localStorage.getItem", "nuget-source-url");
+                if (!string.IsNullOrWhiteSpace(savedUrl))
+                {
+                    SourceUrl = savedUrl;
+                    StateHasChanged();
+                }
+            }
+            catch { }
+        }
+    }
+
     private void HandleLog(string message)
     {
         InvokeAsync(() =>
@@ -251,6 +268,13 @@
         IsProcessing = true;
         try
         {
+            // Save URL for next time
+            try
+            {
+                await JS.InvokeVoidAsync("localStorage.setItem", "nuget-source-url", SourceUrl);
+            }
+            catch { }
+
             string tempDir = Path.Combine(Path.GetTempPath(), "NuGetTool", Metadata.Id);
             // Locate the .nupkg file
             var nupkgFiles = Directory.GetFiles(tempDir, "*.nupkg", SearchOption.AllDirectories);
