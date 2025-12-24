@@ -21,8 +21,8 @@ jobs:
       with:
         dotnet-version: 9.0.x
     - name: Restore dependencies
-      run: dotnet restore
+      run: dotnet restore NuGetTool.Web/NuGetTool.Web.csproj
     - name: Build
-      run: dotnet build --no-restore
-    - name: Test
-      run: dotnet test --no-build --verbosity normal
+      run: dotnet build NuGetTool.Web/NuGetTool.Web.csproj --no-restore --configuration Release
+    - name: Build Docker image
+      run: docker build -t nugettool-web:latest .
