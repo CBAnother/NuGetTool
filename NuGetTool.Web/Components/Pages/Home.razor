@@ -61,6 +61,26 @@
                 </div>
 
                 <div class="form-group">
+                    <label>API Key (for nuget.org)</label>
+                    <input type="password" @bind="ApiKey" class="form-control-premium" placeholder="Enter API Key" />
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>Username (for GitLab/Other)</label>
+                            <input type="text" @bind="UserName" class="form-control-premium" placeholder="Username" />
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="form-group">
+                            <label>Password</label>
+                            <input type="password" @bind="Password" class="form-control-premium" placeholder="Password" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
                     <label>Target Type</label>
                     <div class="d-flex gap-3 mt-2">
                         <label class="d-flex align-items-center gap-2" style="cursor:pointer">
@@ -81,6 +101,12 @@
                         @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-2"></span> }
                         Upload to NuGet
                     </button>
+                    @if (IsProcessing)
+                    {
+                        <button class="btn btn-danger w-100 mt-2" @onclick="CancelOperation">
+                            <i class="bi bi-x-circle me-2"></i>Cancel Operation
+                        </button>
+                    }
                 </div>
             </div>
         </div>
@@ -107,6 +133,9 @@
     private PackageMetadata Metadata = new();
     private string ContentFilesRaw = string.Empty;
     private string SourceUrl = "https://api.nuget.org/v3/index.json";
+    private string? ApiKey;
+    private string? UserName;
+    private string? Password;
     private bool IsNuspec = false;
     private bool IsProcessing = false;
     private List<string> Logs = new();
@@ -114,6 +143,11 @@
     protected override void OnInitialized()
     {
         PackageService.OnLog += HandleLog;
+
+        // Initialize from environment variables
+        ApiKey = Environment.GetEnvironmentVariable("NUGET_ORG_API_KEY");
+        UserName = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_USERNAME");
+        Password = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_PASSWORD");
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -288,7 +322,30 @@
             string packagePath = nupkgFiles[0];
             Logs.Add($"Uploading package: {packagePath} to {SourceUrl}");
 
-            await Task.Run(() => PackageService.UploadPackage(packagePath, IsNuspec, SourceUrl));
+            string? configContent = null;
+            try
+            {
+                // Fix path for different environments
+                string configPath = Path.Combine(AppContext.BaseDirectory, "Data", "nuget.config");
+                if (!File.Exists(configPath))
+                {
+                    // Fallback for development if BaseDirectory is within bin/Debug...
+                    configPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "nuget.config");
+                }
+
+                if (File.Exists(configPath))
+                {
+                    configContent = await File.ReadAllTextAsync(configPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logs.Add($"Warning: Could not load nuget.config: {ex.Message}");
+            }
+
+            // Authentication selection: Use ApiKey if provided.
+            // If ApiKey is empty, the command will rely on the provided nuget.config.
+            await Task.Run(() => PackageService.UploadPackage(packagePath, IsNuspec, SourceUrl, ApiKey, configContent));
             Logs.Add("Upload process completed.");
         }
         catch (Exception ex)
@@ -307,6 +364,11 @@
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(s => s.Trim())
             .ToList();
+    }
+
+    private void CancelOperation()
+    {
+        PackageService.CancelOperation();
     }
 
     public void Dispose()

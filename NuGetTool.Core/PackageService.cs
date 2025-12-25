@@ -63,6 +63,7 @@ public class PackageService
 
     public void BuildPackage(string projectPath, bool isNuspec, string? nugetExePath = null)
     {
+        string workingDir = Path.GetDirectoryName(projectPath) ?? "";
         if (isNuspec)
         {
             if (string.IsNullOrEmpty(nugetExePath) || !File.Exists(nugetExePath))
@@ -70,18 +71,27 @@ public class PackageService
                 // Fallback to "nuget" in PATH if not provided or valid
                 nugetExePath = "nuget"; 
             }
-            RunCommand(nugetExePath, $"pack \"{projectPath}\"");
+            RunCommand(nugetExePath, $"pack \"{projectPath}\"", workingDir);
         }
         else
         {
-            RunCommand("dotnet", $"pack \"{projectPath}\"");
+            RunCommand("dotnet", $"pack \"{projectPath}\"", workingDir);
         }
     }
 
-    public void UploadPackage(string packagePath, bool isNuspec, string source, string? nugetExePath = null)
+    public void UploadPackage(string packagePath, bool isNuspec, string source, string? apiKey = null, string? configContent = null, string? nugetExePath = null)
     {
         if (!File.Exists(packagePath))
             throw new FileNotFoundException($"Package not found: {packagePath}");
+
+        string workingDir = Path.GetDirectoryName(packagePath) ?? "";
+        string configFile = "";
+
+        if (!string.IsNullOrEmpty(configContent))
+        {
+            configFile = Path.Combine(workingDir, "nuget.config");
+            File.WriteAllText(configFile, configContent);
+        }
 
         if (isNuspec)
         {
@@ -89,40 +99,76 @@ public class PackageService
             {
                 nugetExePath = "nuget";
             }
-            // Note: Source handling might need more flexibility, passing explicit source for now
-            string sourceArg = string.IsNullOrEmpty(source) ? "" : $"-Source {source}";
-            RunCommand(nugetExePath, $"push \"{packagePath}\" {sourceArg}");
+            
+            string sourceArg = string.IsNullOrEmpty(source) ? "" : $"-Source \"{source}\"";
+            string authArg = !string.IsNullOrEmpty(apiKey) ? $"-ApiKey {apiKey}" : "";
+            string configArg = !string.IsNullOrEmpty(configFile) ? $"-ConfigFile \"{configFile}\"" : "";
+
+            RunCommand(nugetExePath, $"push \"{packagePath}\" {authArg} {sourceArg} {configArg}", workingDir);
         }
         else
         {
              // Dotnet nuget push
-            string sourceArg = string.IsNullOrEmpty(source) ? "" : $"--source {source}";
-            RunCommand("dotnet", $"nuget push \"{packagePath}\" {sourceArg}");
+            string sourceArg = string.IsNullOrEmpty(source) ? "" : $"--source \"{source}\"";
+            string authArg = !string.IsNullOrEmpty(apiKey) ? $"--api-key {apiKey}" : "";
+            
+            // For dotnet, we can use the config file via --configfile or it will be picked up if it's named nuget.config in the current dir
+            // However, to be explicit:
+            string configArg = !string.IsNullOrEmpty(configFile) ? $"--configfile \"{configFile}\"" : "";
+
+            RunCommand("dotnet", $"nuget push \"{packagePath}\" {authArg} {sourceArg} {configArg}", workingDir);
+        }
+    }
+
+    private Process? _currentProcess;
+
+    public void CancelOperation()
+    {
+        try
+        {
+            if (_currentProcess != null && !_currentProcess.HasExited)
+            {
+                OnLog?.Invoke("Cancelling operation...");
+                _currentProcess.Kill(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            OnLog?.Invoke($"Error while cancelling: {ex.Message}");
         }
     }
 
     public event Action<string>? OnLog;
 
-    private void RunCommand(string fileName, string arguments)
+    private void RunCommand(string fileName, string arguments, string? workingDir = null)
     {
         OnLog?.Invoke($"Running: {fileName} {arguments}");
         var startInfo = new ProcessStartInfo
         {
             FileName = fileName,
             Arguments = arguments,
+            WorkingDirectory = workingDir ?? "",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
 
-        var process = new Process { StartInfo = startInfo };
-        process.OutputDataReceived += (s, e) => { if (e.Data != null) OnLog?.Invoke(e.Data); };
-        process.ErrorDataReceived += (s, e) => { if (e.Data != null) OnLog?.Invoke(e.Data); };
+        _currentProcess = new Process { StartInfo = startInfo };
+        _currentProcess.OutputDataReceived += (s, e) => { if (e.Data != null) OnLog?.Invoke(e.Data); };
+        _currentProcess.ErrorDataReceived += (s, e) => { if (e.Data != null) OnLog?.Invoke(e.Data); };
 
-        process.Start();
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-        process.WaitForExit(); 
+        try
+        {
+            _currentProcess.Start();
+            _currentProcess.BeginOutputReadLine();
+            _currentProcess.BeginErrorReadLine();
+            _currentProcess.WaitForExit();
+        }
+        finally
+        {
+            _currentProcess.Dispose();
+            _currentProcess = null;
+        }
     }
 }
