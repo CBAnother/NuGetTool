@@ -11,11 +11,11 @@
 
 <PageTitle>NuGet Tool - Dashboard</PageTitle>
 
-<div class="container-fluid mt-4">
+<div class="container-fluid mt-2">
     <div class="row">
         <div class="col-lg-5">
             <div class="premium-card">
-                <h5 class="mb-4"><i class="bi bi-box-seam me-2"></i>Package Configuration</h5>
+                <h5 class="mb-2"><i class="bi bi-box-seam me-2"></i>Package Configuration</h5>
                 
                 <div class="form-group">
                     <label>Package ID</label>
@@ -39,7 +39,7 @@
 
                 <div class="form-group">
                     <label>Description</label>
-                    <textarea @bind="Metadata.Description" class="form-control-premium" rows="2" placeholder="Describe your package..."></textarea>
+                    <textarea @bind="Metadata.Description" class="form-control-premium" rows="2" placeholder="Describe your package (defaults to file list if empty)..."></textarea>
                 </div>
 
                 <div class="form-group">
@@ -53,11 +53,17 @@
                     <textarea @bind="ContentFilesRaw" class="form-control-premium" rows="4" placeholder="C:\path\to\file.dll"></textarea>
                 </div>
 
-                <hr class="my-4 border-secondary" />
+                <hr class="my-2 border-secondary" />
 
                 <div class="form-group">
-                    <label>NuGet Source URL</label>
+                    <label>NuGet Source URL (e.g. Repository URL)</label>
                     <input type="text" @bind="SourceUrl" class="form-control-premium" placeholder="https://api.nuget.org/v3/index.json" />
+                    <small class="text-secondary">Provide the full URL for non-nuget.org sources.</small>
+                </div>
+
+                <div class="form-group">
+                    <label>Package Source Key (for nuget.config)</label>
+                    <input type="text" @bind="PackageSourceKey" class="form-control-premium" placeholder="e.g. gitlab" />
                 </div>
 
                 <div class="form-group">
@@ -92,7 +98,7 @@
                     </div>
                 </div>
 
-                <div class="d-grid gap-2 mt-4">
+                <div class="d-grid gap-1 mt-2">
                     <button class="btn btn-primary-premium" @onclick="GenerateProject" disabled="@IsProcessing">
                         @if (IsProcessing) { <span class="spinner-border spinner-border-sm me-2"></span> }
                         Generate & Build Package
@@ -113,7 +119,7 @@
 
         <div class="col-lg-7">
             <div class="premium-card h-100 d-flex flex-column">
-                <div class="d-flex justify-content-between align-items-center mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
                     <h5 class="mb-0"><i class="bi bi-terminal me-2"></i>Process Logs</h5>
                     <button class="btn btn-sm btn-outline-light" @onclick="ClearLogs">Clear</button>
                 </div>
@@ -133,6 +139,7 @@
     private PackageMetadata Metadata = new();
     private string ContentFilesRaw = string.Empty;
     private string SourceUrl = "https://api.nuget.org/v3/index.json";
+    private string PackageSourceKey = "gitlab";
     private string? ApiKey;
     private string? UserName;
     private string? Password;
@@ -148,6 +155,18 @@
         ApiKey = Environment.GetEnvironmentVariable("NUGET_ORG_API_KEY");
         UserName = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_USERNAME");
         Password = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_PASSWORD");
+        
+        var envSourceUrl = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_URL");
+        if (!string.IsNullOrWhiteSpace(envSourceUrl))
+        {
+            SourceUrl = envSourceUrl;
+        }
+
+        var envSourceKey = Environment.GetEnvironmentVariable("GITLAB_PACKAGE_REGISTRY_SOURCE_KEY");
+        if (!string.IsNullOrWhiteSpace(envSourceKey))
+        {
+            PackageSourceKey = envSourceKey;
+        }
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -320,32 +339,29 @@
             }
 
             string packagePath = nupkgFiles[0];
-            Logs.Add($"Uploading package: {packagePath} to {SourceUrl}");
-
             string? configContent = null;
-            try
-            {
-                // Fix path for different environments
-                string configPath = Path.Combine(AppContext.BaseDirectory, "Data", "nuget.config");
-                if (!File.Exists(configPath))
-                {
-                    // Fallback for development if BaseDirectory is within bin/Debug...
-                    configPath = Path.Combine(Directory.GetCurrentDirectory(), "Data", "nuget.config");
-                }
+            bool IsNugetOrg = SourceUrl.Contains("nuget.org", StringComparison.OrdinalIgnoreCase);
+            string targetSource = SourceUrl;
 
-                if (File.Exists(configPath))
-                {
-                    configContent = await File.ReadAllTextAsync(configPath);
-                }
-            }
-            catch (Exception ex)
+            if (!IsNugetOrg)
             {
-                Logs.Add($"Warning: Could not load nuget.config: {ex.Message}");
+                Logs.Add($"Generating dynamic nuget.config for source: {PackageSourceKey}");
+                configContent = PackageService.GetNuGetConfigContent(
+                    PackageSourceKey, 
+                    SourceUrl, 
+                    UserName ?? "", 
+                    Password ?? "");
+                
+                // If using a custom config, we use the Source Key as the target source name
+                // so NuGet matches it to the credentials in the provided config file.
+                targetSource = PackageSourceKey;
             }
+
+            Logs.Add($"Uploading package: {packagePath} to {targetSource} (URL: {SourceUrl})");
 
             // Authentication selection: Use ApiKey if provided.
             // If ApiKey is empty, the command will rely on the provided nuget.config.
-            await Task.Run(() => PackageService.UploadPackage(packagePath, IsNuspec, SourceUrl, ApiKey, configContent));
+            await Task.Run(() => PackageService.UploadPackage(packagePath, IsNuspec, targetSource, ApiKey, configContent));
             Logs.Add("Upload process completed.");
         }
         catch (Exception ex)

@@ -9,6 +9,12 @@ public class PackageService
 {
     public void GenerateNuspec(PackageMetadata data, string outputPath)
     {
+        string workingDir = Path.GetDirectoryName(outputPath) ?? "";
+        string readmePath = Path.Combine(workingDir, "README.md");
+        string description = GetDescription(data);
+        
+        File.WriteAllText(readmePath, description);
+
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\"?>");
         sb.AppendLine("<package>");
@@ -16,7 +22,8 @@ public class PackageService
         sb.AppendLine($"    <id>{data.Id}</id>");
         sb.AppendLine($"    <version>{data.Version}</version>");
         sb.AppendLine($"    <authors>{(string.IsNullOrWhiteSpace(data.Authors) ? "Unknown" : data.Authors)}</authors>");
-        sb.AppendLine($"    <description>{(string.IsNullOrWhiteSpace(data.Description) ? "No description" : data.Description)}</description>");
+        sb.AppendLine($"    <description>{description}</description>");
+        sb.AppendLine("    <readme>README.md</readme>");
         sb.AppendLine("    <contentFiles>");
         foreach (var file in data.ContentFiles)
         {
@@ -26,6 +33,7 @@ public class PackageService
         sb.AppendLine("    </contentFiles>");
         sb.AppendLine("  </metadata>");
         sb.AppendLine("  <files>");
+        sb.AppendLine("    <file src=\"README.md\" target=\"\" />");
         foreach (var file in data.ContentFiles)
         {
             string fileName = Path.GetFileName(file);
@@ -38,6 +46,12 @@ public class PackageService
 
     public void GenerateCsproj(PackageMetadata data, string outputPath)
     {
+        string workingDir = Path.GetDirectoryName(outputPath) ?? "";
+        string readmePath = Path.Combine(workingDir, "README.md");
+        string description = GetDescription(data);
+
+        File.WriteAllText(readmePath, description);
+
         var sb = new StringBuilder();
         sb.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
         sb.AppendLine("  <PropertyGroup>");
@@ -45,10 +59,12 @@ public class PackageService
         sb.AppendLine($"    <PackageId>{data.Id}</PackageId>");
         sb.AppendLine($"    <Version>{data.Version}</Version>");
         sb.AppendLine($"    <Authors>{(string.IsNullOrWhiteSpace(data.Authors) ? "Unknown" : data.Authors)}</Authors>");
-        sb.AppendLine($"    <Description>{(string.IsNullOrWhiteSpace(data.Description) ? "No description" : data.Description)}</Description>");
+        sb.AppendLine($"    <Description>{description}</Description>");
+        sb.AppendLine("    <PackageReadmeFile>README.md</PackageReadmeFile>");
         sb.AppendLine("    <IncludeContentInPack>true</IncludeContentInPack>");
         sb.AppendLine("  </PropertyGroup>");
         sb.AppendLine("  <ItemGroup>");
+        sb.AppendLine("    <None Include=\"README.md\" Pack=\"true\" PackagePath=\"\\\" />");
         foreach (var file in data.ContentFiles)
         {
             string fileName = Path.GetFileName(file);
@@ -59,6 +75,28 @@ public class PackageService
         sb.AppendLine("  </ItemGroup>");
         sb.AppendLine("</Project>");
         File.WriteAllText(outputPath, sb.ToString());
+    }
+
+    private string GetDescription(PackageMetadata data)
+    {
+        if (!string.IsNullOrWhiteSpace(data.Description))
+            return data.Description;
+
+        if (data.ContentFiles.Count > 0)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"# {data.Id}");
+            sb.AppendLine();
+            sb.AppendLine("Package containing the following files:");
+            sb.AppendLine();
+            foreach (var file in data.ContentFiles)
+            {
+                sb.AppendLine($"- {Path.GetFileName(file)}");
+            }
+            return sb.ToString();
+        }
+
+        return "No description provided.";
     }
 
     public void BuildPackage(string projectPath, bool isNuspec, string? nugetExePath = null)
@@ -101,7 +139,8 @@ public class PackageService
             }
             
             string sourceArg = string.IsNullOrEmpty(source) ? "" : $"-Source \"{source}\"";
-            string authArg = !string.IsNullOrEmpty(apiKey) ? $"-ApiKey {apiKey}" : "";
+            // If we have a custom config file (likely with credentials), don't pass ApiKey to avoid conflicts
+            string authArg = (!string.IsNullOrEmpty(apiKey) && string.IsNullOrEmpty(configContent)) ? $"-ApiKey {apiKey}" : "";
             string configArg = !string.IsNullOrEmpty(configFile) ? $"-ConfigFile \"{configFile}\"" : "";
 
             RunCommand(nugetExePath, $"push \"{packagePath}\" {authArg} {sourceArg} {configArg}", workingDir);
@@ -110,7 +149,8 @@ public class PackageService
         {
              // Dotnet nuget push
             string sourceArg = string.IsNullOrEmpty(source) ? "" : $"--source \"{source}\"";
-            string authArg = !string.IsNullOrEmpty(apiKey) ? $"--api-key {apiKey}" : "";
+            // If we have a custom config file (likely with credentials), don't pass ApiKey to avoid conflicts
+            string authArg = (!string.IsNullOrEmpty(apiKey) && string.IsNullOrEmpty(configContent)) ? $"--api-key {apiKey}" : "";
             
             // For dotnet, we can use the config file via --configfile or it will be picked up if it's named nuget.config in the current dir
             // However, to be explicit:
@@ -139,6 +179,25 @@ public class PackageService
     }
 
     public event Action<string>? OnLog;
+    
+    public string GetNuGetConfigContent(string sourceKey, string sourceUrl, string username, string password)
+    {
+        return $$$"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <configuration>
+             <packageSources>
+                 <clear />
+                 <add key="{{{sourceKey}}}" value="{{{sourceUrl}}}" allowInsecureConnections="true"/>
+             </packageSources>
+             <packageSourceCredentials>
+                 <{{{sourceKey}}}>
+                     <add key="Username" value="{{{username}}}" />
+                     <add key="ClearTextPassword" value="{{{password}}}" />
+                 </{{{sourceKey}}}>
+             </packageSourceCredentials>
+            </configuration>
+            """;
+    }
 
     private void RunCommand(string fileName, string arguments, string? workingDir = null)
     {
